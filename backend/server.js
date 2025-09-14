@@ -1,79 +1,85 @@
+
 import express from 'express';
-import sqlite3 from 'sqlite3';
-import bcrypt from 'bcrypt';
-import jwt from 'jsonwebtoken';
 import cors from 'cors';
 import dotenv from 'dotenv';
 
-dotenv.config();
-const app = express();
-const port = process.env.PORT || 5000;
-const db = new sqlite3.Database('./conversations.db');
+// Import routes
+import authRoutes from './routes/auth.js';
+import chatRoutes from './routes/chat.js';
+import moodRoutes from './routes/mood.js';
+import resourceRoutes from './routes/resources.js';
+import counselorRoutes from './routes/counselors.js';
+import appointmentRoutes from './routes/appointments.js';
+import achievementRoutes from './routes/achievements.js';
 
+// Import database and initialization
+import db from './config/database.js';
+import { Resource } from './models/Resource.js';
+import { Counselor } from './models/Counselor.js';
+
+dotenv.config();
+
+const app = express();
+const port = process.env.PORT || 3001;
+
+// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Create tables if not exists
-db.serialize(() => {
-  db.run(`CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    email TEXT UNIQUE,
-    password TEXT
-  )`);
-  db.run(`CREATE TABLE IF NOT EXISTS conversations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    title TEXT,
-    messages TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  )`);
-});
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/chat', chatRoutes);
+app.use('/api/mood', moodRoutes);
+app.use('/api/resources', resourceRoutes);
+app.use('/api/counselors', counselorRoutes);
+app.use('/api/appointments', appointmentRoutes);
+app.use('/api/achievements', achievementRoutes);
 
-// Register
-app.post('/api/register', (req, res) => {
-  const { email, password } = req.body;
-  const hashed = bcrypt.hashSync(password, 10);
-  db.run('INSERT INTO users (email, password) VALUES (?, ?)', [email, hashed], function (err) {
-    if (err) return res.status(400).json({ error: 'User already exists' });
-    res.json({ success: true });
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    message: 'Mental Health Support Server is running',
+    version: '1.0.0',
+    aiProvider: 'rule-based'
   });
 });
 
-// Login
-app.post('/api/login', (req, res) => {
-  const { email, password } = req.body;
-  db.get('SELECT * FROM users WHERE email = ?', [email], (err, user) => {
-    if (!user) return res.status(400).json({ error: 'User not found' });
-    if (!bcrypt.compareSync(password, user.password)) return res.status(400).json({ error: 'Invalid password' });
-    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '1h' });
-    res.json({ token });
-  });
-});
+// Initialize sample data
+async function initializeSampleData() {
+  try {
+    const resourceCount = await Resource.getCount();
+    if (resourceCount === 0) {
+      const resources = [
+        { title: '4-7-8 Breathing Technique', content: 'Inhale for 4 counts, hold for 7 counts, exhale for 8 counts. Repeat 4 times.', type: 'exercise', category: 'breathing' },
+        { title: '5-4-3-2-1 Grounding Technique', content: 'Name 5 things you can see, 4 you can touch, 3 you can hear, 2 you can smell, 1 you can taste.', type: 'exercise', category: 'grounding' },
+        { title: 'Managing Academic Stress', content: 'Break tasks into smaller chunks, use a planner, take regular breaks, and remember that perfection is not required.', type: 'article', category: 'stress' },
+        { title: 'Building Healthy Sleep Habits', content: 'Maintain a consistent sleep schedule, avoid screens 1 hour before bed, and create a relaxing bedtime routine.', type: 'article', category: 'sleep' }
+      ];
+      for (const resource of resources) await Resource.create(resource);
+    }
 
-// Get conversations
-app.get('/api/conversations', (req, res) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'No token' });
-  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-    if (err) return res.status(401).json({ error: 'Invalid token' });
-    db.all('SELECT * FROM conversations WHERE user_id = ?', [decoded.id], (err, rows) => {
-      res.json(rows);
-    });
-  });
-});
+    const counselorCount = await Counselor.getCount();
+    if (counselorCount === 0) {
+      const counselors = [
+        { name: 'Dr. Sarah Johnson', email: 'sarah.johnson@university.edu', specialization: 'Anxiety & Depression', university: 'University Counseling Center', availability: 'Monday-Friday, 9AM-5PM', bio: 'Licensed clinical psychologist with 10 years of experience helping students with anxiety, depression, and academic stress.' },
+        { name: 'Dr. Michael Chen', email: 'michael.chen@university.edu', specialization: 'Academic & Career Counseling', university: 'University Counseling Center', availability: 'Tuesday-Thursday, 10AM-6PM', bio: 'Specializes in helping students navigate academic challenges, career planning, and work-life balance.' },
+        { name: 'Dr. Emily Rodriguez', email: 'emily.rodriguez@university.edu', specialization: 'Trauma & Crisis Intervention', university: 'University Counseling Center', availability: 'Monday-Wednesday-Friday, 8AM-4PM', bio: 'Expert in trauma therapy and crisis intervention, providing immediate support for students in distress.' }
+      ];
+      for (const counselor of counselors) await Counselor.create(counselor);
+    }
+  } catch (error) {
+    console.error('Error initializing sample data:', error);
+  }
+}
 
-// Save conversation
-app.post('/api/conversations', (req, res) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'No token' });
-  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-    if (err) return res.status(401).json({ error: 'Invalid token' });
-    const { title, messages } = req.body;
-    db.run('INSERT INTO conversations (user_id, title, messages) VALUES (?, ?, ?)', [decoded.id, title, JSON.stringify(messages)], function (err) {
-      if (err) return res.status(500).json({ error: 'DB error' });
-      res.json({ id: this.lastID, title, messages });
-    });
-  });
+// Start server
+app.listen(port, () => {
+  console.log(`🧠 Mental Health Support Server running on port ${port}`);
+  console.log(`💚 AI Provider: Rule-based (100% Free)`);
+  console.log(`🔒 Privacy: All data stays on your server`);
+  console.log(`📊 Features: Mood tracking, Chat support, Resources, Counselor booking`);
+  
+  // Initialize sample data
+  initializeSampleData();
 });
-
-app.listen(port, () => console.log(`Server running on port ${port}`));
